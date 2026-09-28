@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { YearStats, ThemeColors } from '../types';
 import { formatNum } from '../utils/contributions';
 import { TrendingUp, ArrowUpRight, ArrowDownRight, Award, BarChart3, Table as TableIcon } from 'lucide-react';
@@ -16,9 +16,21 @@ interface GrowthHighlight {
   to: number;
 }
 
+interface TooltipPosition {
+  top: number;
+  left: number;
+  arrowOffset: number;
+}
+
 export const AnnualGrowthBarChart: React.FC<AnnualGrowthBarChartProps> = ({ years, selectedYears, theme }) => {
   const [viewFormat, setViewFormat] = useState<'chart' | 'table'>('chart');
   const [hoveredYear, setHoveredYear] = useState<number | null>(null);
+  const [hoveredItem, setHoveredItem] = useState<(YearStats & { cumulativeTotal: number; yoyChange: number | null }) | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<TooltipPosition | null>(null);
+
+  const chartWrapperRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const hoveredElRef = useRef<HTMLElement | null>(null);
 
   // Filter by selectedYears if provided
   const filteredYears = selectedYears && selectedYears.length > 0
@@ -74,6 +86,77 @@ export const AnnualGrowthBarChart: React.FC<AnnualGrowthBarChartProps> = ({ year
     ? yearsWithCumulative.reduce((max, y) => (y.total > max.total ? y : max), yearsWithCumulative[0])
     : null;
 
+  const calculateTooltipPosition = (targetEl: HTMLElement) => {
+    if (!chartWrapperRef.current) return null;
+    const wrapperRect = chartWrapperRef.current.getBoundingClientRect();
+    const barRect = targetEl.getBoundingClientRect();
+
+    // Check if the hovered element is scrolled outside view
+    if (barRect.right < wrapperRect.left || barRect.left > wrapperRect.right) {
+      return null;
+    }
+
+    const barCenterX = barRect.left + barRect.width / 2 - wrapperRect.left;
+    const wrapperWidth = wrapperRect.width;
+
+    // Clamp tooltip center X so the badge (approx 210px wide) never extends past the container edges
+    const clampedX = Math.max(115, Math.min(wrapperWidth - 115, barCenterX));
+    const arrowOffset = Math.max(-80, Math.min(80, barCenterX - clampedX));
+
+    return {
+      top: 6,
+      left: clampedX,
+      arrowOffset,
+    };
+  };
+
+  const handleBarMouseEnter = (
+    e: React.MouseEvent<HTMLDivElement>,
+    item: typeof yearsWithCumulative[0]
+  ) => {
+    setHoveredYear(item.year);
+    setHoveredItem(item);
+    hoveredElRef.current = e.currentTarget;
+
+    const pos = calculateTooltipPosition(e.currentTarget);
+    if (pos) {
+      setTooltipPos(pos);
+    }
+  };
+
+  const handleBarMouseLeave = () => {
+    setHoveredYear(null);
+    setHoveredItem(null);
+    hoveredElRef.current = null;
+    setTooltipPos(null);
+  };
+
+  const handleScroll = () => {
+    if (hoveredElRef.current && hoveredYear !== null) {
+      const pos = calculateTooltipPosition(hoveredElRef.current);
+      if (pos) {
+        setTooltipPos(pos);
+      } else {
+        // Element scrolled out of container view
+        setHoveredYear(null);
+        setHoveredItem(null);
+        hoveredElRef.current = null;
+        setTooltipPos(null);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (hoveredElRef.current) {
+        const pos = calculateTooltipPosition(hoveredElRef.current);
+        if (pos) setTooltipPos(pos);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   return (
     <div 
       className="rounded-2xl border p-4 sm:p-6 mb-6 transition-all"
@@ -96,7 +179,10 @@ export const AnnualGrowthBarChart: React.FC<AnnualGrowthBarChartProps> = ({ year
         {/* View toggle */}
         <div className="flex items-center p-1 rounded-xl border" style={{ borderColor: theme.border, backgroundColor: theme.isDark ? '#0d1117' : '#ffffff' }}>
           <button
-            onClick={() => setViewFormat('chart')}
+            onClick={() => {
+              setViewFormat('chart');
+              handleBarMouseLeave();
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer"
             style={{
               backgroundColor: viewFormat === 'chart' ? (theme.isDark ? '#21262d' : '#f0f3f6') : 'transparent',
@@ -107,7 +193,10 @@ export const AnnualGrowthBarChart: React.FC<AnnualGrowthBarChartProps> = ({ year
             <span>Visual Chart</span>
           </button>
           <button
-            onClick={() => setViewFormat('table')}
+            onClick={() => {
+              setViewFormat('table');
+              handleBarMouseLeave();
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer"
             style={{
               backgroundColor: viewFormat === 'table' ? (theme.isDark ? '#21262d' : '#f0f3f6') : 'transparent',
@@ -122,89 +211,122 @@ export const AnnualGrowthBarChart: React.FC<AnnualGrowthBarChartProps> = ({ year
 
       {viewFormat === 'chart' ? (
         <div>
-          {/* Main Bar Chart Container */}
-          <div className="relative pt-6 pb-2 overflow-x-auto scrollbar-thin">
-            <div className="min-w-[680px] w-full h-64 flex items-end gap-2 sm:gap-4 px-2 border-b" style={{ borderColor: theme.border }}>
-              {yearsWithCumulative.map((item) => {
-                const heightPercent = maxAnnual > 0 ? (item.total / maxAnnual) * 100 : 0;
-                const isHovered = hoveredYear === item.year;
-                const isMax = item.total === maxAnnual;
-
-                return (
-                  <div
-                    key={item.year}
-                    onMouseEnter={() => setHoveredYear(item.year)}
-                    onMouseLeave={() => setHoveredYear(null)}
-                    className="flex-1 flex flex-col items-center justify-end h-full relative group cursor-pointer"
-                  >
-                    {/* Tooltip on hover */}
-                    {isHovered && (
-                      <div 
-                        className="absolute bottom-full mb-3 px-3 py-2 rounded-xl border text-xs shadow-xl z-30 whitespace-nowrap animate-in fade-in"
-                        style={{
-                          backgroundColor: theme.isDark ? '#161b22' : '#ffffff',
-                          borderColor: theme.border,
-                          color: theme.textPrimary,
-                        }}
-                      >
-                        <div className="font-bold flex items-center justify-between gap-3">
-                          <span>{item.year}</span>
-                          <span className="font-mono text-emerald-400">{formatNum(item.total)} contribs</span>
-                        </div>
-                        <div className="text-[11px] font-mono mt-1 text-gray-400 space-y-0.5">
-                          <div>Cumulative: {formatNum(item.cumulativeTotal)}</div>
-                          <div>Active days: {item.activeDays} days</div>
-                          {item.yoyChange !== null && (
-                            <div className={item.yoyChange >= 0 ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
-                              YoY Change: {item.yoyChange >= 0 ? `+${item.yoyChange}%` : `${item.yoyChange}%`}
-                            </div>
-                          )}
-                        </div>
+          {/* Main Bar Chart Wrapper with Floating Tooltip outside the scroll container */}
+          <div ref={chartWrapperRef} className="relative">
+            {/* Floating Tooltip Badge - positioned outside overflow container so it is NEVER clipped and NEVER causes horizontal scrollbar */}
+            {hoveredItem && tooltipPos && (
+              <div 
+                className="absolute z-40 pointer-events-none transition-all duration-75 animate-in fade-in zoom-in-95"
+                style={{
+                  top: `${tooltipPos.top}px`,
+                  left: `${tooltipPos.left}px`,
+                  transform: 'translateX(-50%)',
+                }}
+              >
+                <div 
+                  className="relative px-3.5 py-2.5 rounded-xl border text-xs shadow-2xl whitespace-nowrap"
+                  style={{
+                    backgroundColor: theme.isDark ? 'rgba(22, 27, 34, 0.96)' : 'rgba(255, 255, 255, 0.96)',
+                    borderColor: theme.border,
+                    color: theme.textPrimary,
+                    backdropFilter: 'blur(8px)',
+                  }}
+                >
+                  <div className="font-bold flex items-center justify-between gap-4">
+                    <span className="text-sm font-bold">{hoveredItem.year}</span>
+                    <span className="font-mono font-bold text-emerald-400">{formatNum(hoveredItem.total)} contribs</span>
+                  </div>
+                  <div className="text-[11px] font-mono mt-1 text-gray-400 space-y-0.5">
+                    <div>Cumulative: {formatNum(hoveredItem.cumulativeTotal)}</div>
+                    <div>Active days: {hoveredItem.activeDays} days</div>
+                    {hoveredItem.yoyChange !== null && (
+                      <div className={hoveredItem.yoyChange >= 0 ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                        YoY Change: {hoveredItem.yoyChange >= 0 ? `+${hoveredItem.yoyChange}%` : `${hoveredItem.yoyChange}%`}
                       </div>
                     )}
-
-                    {/* Bar Label above (if notable or hovered) */}
-                    {(isHovered || isMax) && (
-                      <span 
-                        className="text-[10px] font-mono font-bold tabular-nums mb-1"
-                        style={{ color: isMax ? '#eab308' : theme.textPrimary }}
-                      >
-                        {formatNum(item.total)}
-                      </span>
-                    )}
-
-                    {/* Bar */}
-                    <div
-                      className="w-full rounded-t-md transition-all duration-300 relative overflow-hidden"
-                      style={{
-                        height: `${Math.max(heightPercent, 2)}%`,
-                        backgroundColor: isMax 
-                          ? '#10b981' 
-                          : isHovered 
-                            ? theme.levels[3] 
-                            : (item.total > 0 ? theme.levels[2] : (theme.isDark ? '#21262d' : '#e2e8f0')),
-                      }}
-                    >
-                      {isMax && (
-                        <div className="absolute top-0.5 left-1/2 -translate-x-1/2">
-                          <Award className="w-3 h-3 text-yellow-300" />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Year Label */}
-                    <div 
-                      className="text-[11px] font-mono font-medium mt-2 pt-1 transition-colors"
-                      style={{ 
-                        color: isHovered || isMax ? theme.textPrimary : theme.textMuted,
-                        fontWeight: isHovered || isMax ? 700 : 500
-                      }}
-                    >
-                      {String(item.year).slice(2)}'
-                    </div>
                   </div>
-                );
-              })}
+
+                  {/* Downward pointing caret directed towards the hovered bar */}
+                  <div 
+                    className="absolute -bottom-1 w-2.5 h-2.5 border-r border-b"
+                    style={{
+                      left: `calc(50% + ${tooltipPos.arrowOffset}px)`,
+                      transform: 'translateX(-50%) rotate(45deg)',
+                      backgroundColor: theme.isDark ? '#161b22' : '#ffffff',
+                      borderColor: theme.border,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Scrollable Bars Area with generous top headroom for the badge and labels */}
+            <div 
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              className="relative pt-24 pb-2 overflow-x-auto scrollbar-thin"
+            >
+              <div className="min-w-[680px] w-full h-56 flex items-end gap-2 sm:gap-4 px-3 border-b" style={{ borderColor: theme.border }}>
+                {yearsWithCumulative.map((item) => {
+                  const heightPercent = maxAnnual > 0 ? (item.total / maxAnnual) * 100 : 0;
+                  const isHovered = hoveredYear === item.year;
+                  const isMax = item.total === maxAnnual;
+
+                  return (
+                    <div
+                      key={item.year}
+                      onMouseEnter={(e) => handleBarMouseEnter(e, item)}
+                      onMouseLeave={handleBarMouseLeave}
+                      className="flex-1 flex flex-col items-center justify-end h-full relative group cursor-pointer rounded-lg transition-colors py-1"
+                      style={{
+                        backgroundColor: isHovered 
+                          ? (theme.isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)')
+                          : 'transparent'
+                      }}
+                    >
+                      {/* Bar Label above bar (if notable or hovered) */}
+                      {(isHovered || isMax) && (
+                        <span 
+                          className="text-[10px] font-mono font-bold tabular-nums mb-1 pointer-events-none"
+                          style={{ color: isMax ? '#eab308' : theme.textPrimary }}
+                        >
+                          {formatNum(item.total)}
+                        </span>
+                      )}
+
+                      {/* Bar */}
+                      <div
+                        className="w-full rounded-t-md transition-all duration-300 relative overflow-hidden"
+                        style={{
+                          height: `${Math.max(heightPercent, 2)}%`,
+                          backgroundColor: isMax 
+                            ? '#10b981' 
+                            : isHovered 
+                              ? theme.levels[3] 
+                              : (item.total > 0 ? theme.levels[2] : (theme.isDark ? '#21262d' : '#e2e8f0')),
+                        }}
+                      >
+                        {isMax && (
+                          <div className="absolute top-0.5 left-1/2 -translate-x-1/2">
+                            <Award className="w-3 h-3 text-yellow-300" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Year Label */}
+                      <div 
+                        className="text-[11px] font-mono font-medium mt-2 pt-1 transition-colors"
+                        style={{ 
+                          color: isHovered || isMax ? theme.textPrimary : theme.textMuted,
+                          fontWeight: isHovered || isMax ? 700 : 500
+                        }}
+                      >
+                        {String(item.year).slice(2)}'
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 

@@ -1,0 +1,7 @@
+{
+  "name": "GitYears - Multi-Year GitHub Contributions Tracker",
+  "description": "Interactive multi-year GitHub contributions visualizer to track and compare all years of developer activity in a single unified chart.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
